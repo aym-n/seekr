@@ -1,6 +1,6 @@
 use nanohtml2text::html2text;
 use std::collections::HashMap;
-use std::io::Result;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::{fs::*, usize};
 
@@ -70,7 +70,7 @@ impl<'a> Iterator for Lexer<'a> {
     }
 }
 
-fn read_html_file<P: AsRef<Path>>(file_path: P) -> Result<String> {
+fn read_html_file<P: AsRef<Path>>(file_path: P) -> io::Result<String> {
     let file_content = read_to_string(file_path)?;
     Ok(html2text(&file_content))
 }
@@ -78,8 +78,19 @@ fn read_html_file<P: AsRef<Path>>(file_path: P) -> Result<String> {
 type TermFrequency = HashMap<String, usize>;
 type Index = HashMap<PathBuf, TermFrequency>;
 
-fn main() -> Result<()> {
+fn serialize_index(index: &Index, index_path: &str) {
+    println!("Serializing index to {:?}", index_path);
+    let index_file = File::create(index_path).expect("Could not create index file");
+    serde_json::to_writer(index_file, index).expect("Could not serialize index file");
+}
 
+fn deserialize_index(index_path: &str) -> Index {
+    println!("Deserializing index from {:?}", index_path);
+    let index_file = File::open(index_path).expect("Could not open index file");
+    serde_json::from_reader(index_file).expect("Could not deserialize index file")
+}
+
+fn main() -> io::Result<()> {
     let dir_path = "docs/char";
     let dir = read_dir(dir_path)?;
 
@@ -89,36 +100,40 @@ fn main() -> Result<()> {
         let file_path = file?.path();
 
         println!("Processing file: {:?}", &file_path);
-        
+
         let file_content = read_html_file(&file_path)?.chars().collect::<Vec<char>>();
-    
+
         let mut term_frequency: TermFrequency = HashMap::new();
-    
+
         for token in Lexer::new(&file_content) {
             let id = token
                 .iter()
                 .map(|x| x.to_ascii_uppercase())
                 .collect::<String>();
-    
+
             if let Some(count) = term_frequency.get_mut(&id) {
                 *count += 1;
             } else {
                 term_frequency.insert(id, 1);
             }
         }
-    
-        let mut stats =  term_frequency.iter().collect::<Vec<_>>();
+
+        let mut stats = term_frequency.iter().collect::<Vec<_>>();
         stats.sort_by_key(|(_, f)| *f);
         stats.reverse();
 
         index.insert(file_path, term_frequency);
-
     }
 
     for (file_path, term_frequency) in index.iter() {
         println!("{:?} has {} unique tokens", file_path, term_frequency.len());
     }
 
+    let path = "index.json";
+    serialize_index(&index, path);
+
+    let index = deserialize_index(path);
+    println!("{path} => {count} files", count = index.len());
 
     Ok(())
 }
