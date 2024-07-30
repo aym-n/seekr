@@ -1,6 +1,7 @@
 use nanohtml2text::html2text;
+use std::collections::HashMap;
 use std::io::Result;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::{fs::*, usize};
 
 struct Lexer<'a> {
@@ -73,14 +74,51 @@ fn read_html_file<P: AsRef<Path>>(file_path: P) -> Result<String> {
     let file_content = read_to_string(file_path)?;
     Ok(html2text(&file_content))
 }
-fn main() -> Result<()> {
-    let file_path = "docs/index.html";
-    let file_content = read_html_file(file_path)?.chars().collect::<Vec<char>>();
 
-    for token in Lexer::new(&file_content) {
-        let id = token.iter().map(|x| x.to_ascii_uppercase()).collect::<String>();
-        println!("{id}");
+type TermFrequency = HashMap<String, usize>;
+type Index = HashMap<PathBuf, TermFrequency>;
+
+fn main() -> Result<()> {
+
+    let dir_path = "docs/char";
+    let dir = read_dir(dir_path)?;
+
+    let mut index: Index = HashMap::new();
+
+    for file in dir {
+        let file_path = file?.path();
+
+        println!("Processing file: {:?}", &file_path);
+        
+        let file_content = read_html_file(&file_path)?.chars().collect::<Vec<char>>();
+    
+        let mut term_frequency: TermFrequency = HashMap::new();
+    
+        for token in Lexer::new(&file_content) {
+            let id = token
+                .iter()
+                .map(|x| x.to_ascii_uppercase())
+                .collect::<String>();
+    
+            if let Some(count) = term_frequency.get_mut(&id) {
+                *count += 1;
+            } else {
+                term_frequency.insert(id, 1);
+            }
+        }
+    
+        let mut stats =  term_frequency.iter().collect::<Vec<_>>();
+        stats.sort_by_key(|(_, f)| *f);
+        stats.reverse();
+
+        index.insert(file_path, term_frequency);
+
     }
+
+    for (file_path, term_frequency) in index.iter() {
+        println!("{:?} has {} unique tokens", file_path, term_frequency.len());
+    }
+
 
     Ok(())
 }
