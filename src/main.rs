@@ -97,37 +97,50 @@ fn index_folder(folder_path: &str) -> io::Result<()> {
 
     let mut index: Index = HashMap::new();
 
-    for file in folder {
-        let file_path = file?.path();
-
-        println!("Processing file: {:?}", &file_path);
-
-        let file_content = read_html_file(&file_path)?.chars().collect::<Vec<char>>();
-
-        let mut term_frequency: TermFrequency = HashMap::new();
-
-        for token in Lexer::new(&file_content) {
-            let id = token
-                .iter()
-                .map(|x| x.to_ascii_uppercase())
-                .collect::<String>();
-
-            if let Some(count) = term_frequency.get_mut(&id) {
-                *count += 1;
-            } else {
-                term_frequency.insert(id, 1);
-            }
-        }
-
-        let mut stats = term_frequency.iter().collect::<Vec<_>>();
-        stats.sort_by_key(|(_, f)| *f);
-        stats.reverse();
-
-        index.insert(file_path, term_frequency);
-    }
+    process_folder(folder, &mut index)?;
 
     let path = "index.json";
     serialize_index(&index, path);
+
+    Ok(())
+}
+
+fn process_folder(folder: ReadDir, index: &mut Index) -> io::Result<()> {
+
+    for entry in folder {
+        let entry = entry?;
+        let path = entry.path();
+
+        if path.is_dir() {
+            let subfolder = read_dir(&path)?;
+
+            println!("Indexing folder {:?}", path);
+
+            process_folder(subfolder, index)?;
+        } else {
+
+            println!("Indexing file {:?}", path);
+
+            let file_content = read_html_file(&path)?.chars().collect::<Vec<char>>();
+
+            let mut term_frequency: TermFrequency = HashMap::new();
+
+            for token in Lexer::new(&file_content) {
+                let id = token
+                    .iter()
+                    .map(|x| x.to_ascii_uppercase())
+                    .collect::<String>();
+
+                if let Some(count) = term_frequency.get_mut(&id) {
+                    *count += 1;
+                } else {
+                    term_frequency.insert(id, 1);
+                }
+            }
+
+            index.insert(path, term_frequency);
+        }
+    }
 
     Ok(())
 }
