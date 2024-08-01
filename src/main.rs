@@ -2,6 +2,7 @@ use nanohtml2text::html2text;
 use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::process::exit;
 use std::{fs::*, usize};
 
 struct Lexer<'a> {
@@ -90,13 +91,13 @@ fn deserialize_index(index_path: &str) -> Index {
     serde_json::from_reader(index_file).expect("Could not deserialize index file")
 }
 
-fn main() -> io::Result<()> {
-    let dir_path = "docs/char";
-    let dir = read_dir(dir_path)?;
+fn index_folder(folder_path: &str) -> io::Result<()> {
+
+    let folder = read_dir(folder_path)?;
 
     let mut index: Index = HashMap::new();
 
-    for file in dir {
+    for file in folder {
         let file_path = file?.path();
 
         println!("Processing file: {:?}", &file_path);
@@ -125,15 +126,56 @@ fn main() -> io::Result<()> {
         index.insert(file_path, term_frequency);
     }
 
-    for (file_path, term_frequency) in index.iter() {
-        println!("{:?} has {} unique tokens", file_path, term_frequency.len());
-    }
-
     let path = "index.json";
     serialize_index(&index, path);
 
-    let index = deserialize_index(path);
-    println!("{path} => {count} files", count = index.len());
+    Ok(())
+}
+
+fn check_index(index_path: &str) -> io::Result<()> {
+    let index = deserialize_index(index_path);
+    println!("{index_path} => {count} files", count = index.len());
+    Ok(())
+}
+
+fn main() -> io::Result<()> {
+    let mut args = std::env::args();
+
+    let command = args.nth(1).unwrap_or_else(|| {
+        eprintln!("ERROR: No command provided");
+        exit(1);
+    });
+
+    match command.as_str() {
+        "index" => {
+            let dir_path = args.next().unwrap_or_else(|| {
+                eprintln!("ERROR: No directory provided");
+                eprint!("USAGE: index <directory>");
+                exit(1);
+            });
+
+            index_folder(&dir_path).unwrap_or_else(|e| {
+                eprintln!("ERROR: {}", e);
+                exit(1);
+            });
+        }
+        "search" => {
+            let index_path = args.next().unwrap_or_else(|| {
+                eprintln!("ERROR: No index file provided");
+                eprintln!("USAGE: search <index>");
+                exit(1);
+            });
+
+            check_index(&index_path).unwrap_or_else(|e| {
+                eprintln!("ERROR: {}", e);
+                exit(1);
+            });
+        }
+        _ => {
+            eprintln!("ERROR: Unknown command: {}", command);
+            exit(1);
+        }
+    }
 
     Ok(())
 }
