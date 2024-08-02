@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 use std::process::exit;
 use std::{fs::*, usize};
 
+use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
+
 struct Lexer<'a> {
     content: &'a [char],
 }
@@ -92,7 +94,6 @@ fn deserialize_index(index_path: &str) -> Index {
 }
 
 fn index_folder(folder_path: &str) -> io::Result<()> {
-
     let folder = read_dir(folder_path)?;
 
     let mut index: Index = HashMap::new();
@@ -106,7 +107,6 @@ fn index_folder(folder_path: &str) -> io::Result<()> {
 }
 
 fn process_folder(folder: ReadDir, index: &mut Index) -> io::Result<()> {
-
     for entry in folder {
         let entry = entry?;
         let path = entry.path();
@@ -118,7 +118,6 @@ fn process_folder(folder: ReadDir, index: &mut Index) -> io::Result<()> {
 
             process_folder(subfolder, index)?;
         } else {
-
             println!("Indexing file {:?}", path);
 
             let file_content = read_html_file(&path)?.chars().collect::<Vec<char>>();
@@ -151,6 +150,66 @@ fn check_index(index_path: &str) -> io::Result<()> {
     Ok(())
 }
 
+fn serve_static_files(request: Request, path: &str, content_type: &str) -> Result<(), ()> {
+    let header = Header::from_bytes(&b"Content-Type"[..], content_type.as_bytes()).unwrap();
+    let file = File::open(path).map_err(|e| {
+        eprintln!("ERROR: Could not open file: {e}");
+    })?;
+
+    let response = Response::from_file(file)
+        .with_header(header)
+        .with_status_code(StatusCode(200));
+    request.respond(response).map_err(|e| {
+        eprintln!("ERROR: Could not respond to request: {e}");
+    })?;
+    Ok(())
+}
+
+fn serve_request(mut request: Request) -> Result<(), ()> {
+    println!(
+        "INFO: Incoming request, method: {:?}, url: {}",
+        request.method(),
+        request.url()
+    );
+
+    match request.method() {
+        Method::Post => {
+            let mut body = Vec::new();
+            request.as_reader().read_to_end(&mut body).map_err(|e| {
+                eprintln!("ERROR: Could not read request body: {e}");
+            })?;
+
+            let body = String::from_utf8(body).map_err(|e| {
+                eprintln!("ERROR: Could not parse request body: {e}");
+            })?;
+
+            println!("INFO: Request body: {}", body);
+
+            request.respond(Response::new_empty(StatusCode(200))).map_err(|e| {
+                eprintln!("ERROR: Could not respond to request: {e}");
+            })?;
+        }
+
+        Method::Get => match request.url() {
+            "/" | "/index.html" => {
+                serve_static_files(request, "static/index.html", "text/html")?;
+            }
+
+            "/index.js" => {
+                serve_static_files(request, "static/index.js", "application/javascript")?;
+            }
+
+            _ => {
+                serve_static_files(request, "static/404.html", "text/html")?;
+            }
+        },
+
+        _ => {
+            serve_static_files(request, "static/404.html", "text/html")?;
+        }
+    }
+    Ok(())
+}
 fn main() -> io::Result<()> {
     let mut args = std::env::args();
 
@@ -183,6 +242,19 @@ fn main() -> io::Result<()> {
                 eprintln!("ERROR: {}", e);
                 exit(1);
             });
+        }
+        "serve" => {
+            let address = args.next().unwrap_or("0.0.0.0:8000".to_string());
+            let server = Server::http(&address).unwrap_or_else(|err| {
+                eprintln!("ERROR: Could not start server: {err}");
+                exit(1);
+            });
+
+            println!("Server started at http://{address}");
+
+            for request in server.incoming_requests() {
+                let _ = serve_request(request);
+            }
         }
         _ => {
             eprintln!("ERROR: Unknown command: {}", command);
