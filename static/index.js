@@ -1,6 +1,6 @@
 fetch('http://0.0.0.0:8000/search', {
     method: 'POST',
-    body: JSON.stringify({ text: 'Hello, world!' }),
+    body: "Hashmap",
     headers: {
         'Content-Type': 'application/json'
     }

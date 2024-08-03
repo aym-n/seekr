@@ -1,6 +1,6 @@
 use nanohtml2text::html2text;
 use std::collections::HashMap;
-use std::io;
+use std::{io, result, vec};
 use std::path::{Path, PathBuf};
 use std::process::exit;
 use std::{fs::*, usize};
@@ -33,7 +33,7 @@ impl<'a> Lexer<'a> {
         self.consume(n)
     }
 
-    fn next_token(&mut self) -> Option<&'a [char]> {
+    fn next_token(&mut self) -> Option<String> {
         self.remove_whitespace();
         if self.content.len() == 0 {
             return None;
@@ -42,14 +42,14 @@ impl<'a> Lexer<'a> {
         let c = self.content[0];
 
         if c.is_alphabetic() {
-            return Some(self.consume_while(|c| c.is_alphabetic()));
+            return Some(self.consume_while(|c| c.is_alphabetic()).iter().map(|x| x.to_ascii_uppercase()).collect());
         }
 
         if c.is_numeric() {
-            return Some(self.consume_while(|c| c.is_numeric()));
+            return Some(self.consume_while(|c| c.is_numeric()).iter().collect());
         }
 
-        return Some(self.consume(1));
+        return Some(self.consume(1).iter().collect());
     }
 
     fn remove_whitespace(&mut self) -> &'a [char] {
@@ -66,7 +66,7 @@ impl<'a> Lexer<'a> {
 }
 
 impl<'a> Iterator for Lexer<'a> {
-    type Item = &'a [char];
+    type Item = String;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.next_token()
@@ -125,15 +125,10 @@ fn process_folder(folder: ReadDir, index: &mut Index) -> io::Result<()> {
             let mut term_frequency: TermFrequency = HashMap::new();
 
             for token in Lexer::new(&file_content) {
-                let id = token
-                    .iter()
-                    .map(|x| x.to_ascii_uppercase())
-                    .collect::<String>();
-
-                if let Some(count) = term_frequency.get_mut(&id) {
+                if let Some(count) = term_frequency.get_mut(&token) {
                     *count += 1;
                 } else {
-                    term_frequency.insert(id, 1);
+                    term_frequency.insert(token, 1);
                 }
             }
 
@@ -165,7 +160,17 @@ fn serve_static_files(request: Request, path: &str, content_type: &str) -> Resul
     Ok(())
 }
 
-fn serve_request(mut request: Request) -> Result<(), ()> {
+fn tf(index: &TermFrequency, term: &str) -> f32 {
+    index.get(term).cloned().unwrap_or(0) as f32 / index.iter().map(|(_, v)| v).sum::<usize>() as f32
+}
+
+fn idf(index: &Index, term: &str) -> f32 {
+    let n = index.len() as f32;
+    let df = index.iter().filter(|(_, term_frequency)| term_frequency.contains_key(term)).count().max(1) as f32;
+    (n / df).log10()
+}
+
+fn serve_request(index: &Index, mut request: Request) -> Result<(), ()> {
     println!(
         "INFO: Incoming request, method: {:?}, url: {}",
         request.method(),
@@ -182,10 +187,29 @@ fn serve_request(mut request: Request) -> Result<(), ()> {
             let body = String::from_utf8(body).map_err(|e| {
                 eprintln!("ERROR: Could not parse request body: {e}");
             })?;
+            
+            
+            let mut result = Vec::<(&Path, f32)>::new();
 
-            println!("INFO: Request body: {}", body);
+            for (path , file_index) in index {
+                let mut score = 0.0;
+                for term in Lexer::new(&body.chars().collect::<Vec<char>>()) {
+                    score += tf(file_index, &term) * idf(index, &term);
+                }
+                result.push((path, score));
+            }
 
-            request.respond(Response::new_empty(StatusCode(200))).map_err(|e| {
+            result.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+
+            for (path, score) in result.iter().take(10) {
+                println!("{:?} => {}", path, score);
+            }
+
+            let response = Response::from_string("OK")
+                .with_status_code(StatusCode(200))
+                .with_header(Header::from_bytes(&b"Content-Type"[..], &b"text/plain"[..]).unwrap());
+
+            request.respond(response).map_err(|e| {
                 eprintln!("ERROR: Could not respond to request: {e}");
             })?;
         }
@@ -244,6 +268,10 @@ fn main() -> io::Result<()> {
             });
         }
         "serve" => {
+            let index_path = args.next().unwrap_or("index.json".to_string());
+
+            let index = deserialize_index(&index_path);
+
             let address = args.next().unwrap_or("0.0.0.0:8000".to_string());
             let server = Server::http(&address).unwrap_or_else(|err| {
                 eprintln!("ERROR: Could not start server: {err}");
@@ -253,7 +281,7 @@ fn main() -> io::Result<()> {
             println!("Server started at http://{address}");
 
             for request in server.incoming_requests() {
-                let _ = serve_request(request);
+                let _ = serve_request(&index, request);
             }
         }
         _ => {
