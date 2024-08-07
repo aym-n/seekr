@@ -1,10 +1,10 @@
 use nanohtml2text::html2text;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::{default, io, result, vec};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::exit;
 use std::{fs::*, usize};
-use serde::{Deserialize, Serialize};
 
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 
@@ -43,7 +43,12 @@ impl<'a> Lexer<'a> {
         let c = self.content[0];
 
         if c.is_alphabetic() {
-            return Some(self.consume_while(|c| c.is_alphabetic()).iter().map(|x| x.to_ascii_uppercase()).collect());
+            return Some(
+                self.consume_while(|c| c.is_alphabetic())
+                    .iter()
+                    .map(|x| x.to_ascii_uppercase())
+                    .collect(),
+            );
         }
 
         if c.is_numeric() {
@@ -104,7 +109,7 @@ fn deserialize_index(index_path: &str) -> Index {
 fn index_folder(folder_path: &str) -> io::Result<()> {
     let folder = read_dir(folder_path)?;
 
-    let mut index: Index  = Default::default();
+    let mut index: Index = Default::default();
 
     process_folder(folder, &mut index)?;
 
@@ -149,7 +154,7 @@ fn process_folder(folder: ReadDir, index: &mut Index) -> io::Result<()> {
                 }
             }
 
-            index.tfd.insert(path, (n , term_frequency));
+            index.tfd.insert(path, (n, term_frequency));
         }
     }
 
@@ -204,11 +209,10 @@ fn serve_request(index: &Index, mut request: Request) -> Result<(), ()> {
             let body = String::from_utf8(body).map_err(|e| {
                 eprintln!("ERROR: Could not parse request body: {e}");
             })?;
-            
-            
+
             let mut result = Vec::<(&Path, f32)>::new();
 
-            for (path , (n, file_index)) in &index.tfd {
+            for (path, (n, file_index)) in &index.tfd {
                 let mut score = 0.0;
                 for term in Lexer::new(&body.chars().collect::<Vec<char>>()) {
                     score += tf(&file_index, *n, &term) * idf(&index.df, index.tfd.len(), &term);
