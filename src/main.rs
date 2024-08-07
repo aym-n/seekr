@@ -226,13 +226,18 @@ fn serve_request(index: &Index, mut request: Request) -> Result<(), ()> {
                 println!("{:?} => {}", path, score);
             }
 
-            let response = Response::from_string("OK")
-                .with_status_code(StatusCode(200))
-                .with_header(Header::from_bytes(&b"Content-Type"[..], &b"text/plain"[..]).unwrap());
+            let result_json = serde_json::to_string(&result).map_err(|e| {
+                eprintln!("ERROR: Could not serialize response: {e}");
+            })?;
+
+            let response = Response::from_string(result_json)
+                .with_header(Header::from_bytes(&b"Content-Type"[..], b"application/json").unwrap())
+                .with_status_code(StatusCode(200));
 
             request.respond(response).map_err(|e| {
                 eprintln!("ERROR: Could not respond to request: {e}");
             })?;
+
         }
 
         Method::Get => match request.url() {
