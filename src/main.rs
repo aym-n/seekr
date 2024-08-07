@@ -1,9 +1,10 @@
 use nanohtml2text::html2text;
 use std::collections::HashMap;
-use std::{io, result, vec};
+use std::{default, io, result, vec};
 use std::path::{Path, PathBuf};
 use std::process::exit;
 use std::{fs::*, usize};
+use serde::{Deserialize, Serialize};
 
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 
@@ -79,7 +80,14 @@ fn read_html_file<P: AsRef<Path>>(file_path: P) -> io::Result<String> {
 }
 
 type TermFrequency = HashMap<String, usize>;
-type Index = HashMap<PathBuf, TermFrequency>;
+type TermFrequencyPerDoc = HashMap<PathBuf, (usize, TermFrequency)>;
+type DocFrequency = HashMap<String, usize>;
+
+#[derive(Default, Serialize, Deserialize)]
+struct Index {
+    tfd: TermFrequencyPerDoc,
+    df: DocFrequency,
+}
 
 fn serialize_index(index: &Index, index_path: &str) {
     println!("Serializing index to {:?}", index_path);
@@ -96,7 +104,7 @@ fn deserialize_index(index_path: &str) -> Index {
 fn index_folder(folder_path: &str) -> io::Result<()> {
     let folder = read_dir(folder_path)?;
 
-    let mut index: Index = HashMap::new();
+    let mut index: Index  = Default::default();
 
     process_folder(folder, &mut index)?;
 
@@ -123,16 +131,25 @@ fn process_folder(folder: ReadDir, index: &mut Index) -> io::Result<()> {
             let file_content = read_html_file(&path)?.chars().collect::<Vec<char>>();
 
             let mut term_frequency: TermFrequency = HashMap::new();
-
+            let mut n = 0;
             for token in Lexer::new(&file_content) {
                 if let Some(count) = term_frequency.get_mut(&token) {
                     *count += 1;
                 } else {
                     term_frequency.insert(token, 1);
                 }
+                n += 1;
             }
 
-            index.insert(path, term_frequency);
+            for token in term_frequency.keys() {
+                if let Some(count) = index.df.get_mut(token) {
+                    *count += 1;
+                } else {
+                    index.df.insert(token.to_string(), 1);
+                }
+            }
+
+            index.tfd.insert(path, (n , term_frequency));
         }
     }
 
@@ -141,7 +158,7 @@ fn process_folder(folder: ReadDir, index: &mut Index) -> io::Result<()> {
 
 fn check_index(index_path: &str) -> io::Result<()> {
     let index = deserialize_index(index_path);
-    println!("{index_path} => {count} files", count = index.len());
+    println!("{index_path} => {count} files", count = index.tfd.len());
     Ok(())
 }
 
@@ -160,14 +177,14 @@ fn serve_static_files(request: Request, path: &str, content_type: &str) -> Resul
     Ok(())
 }
 
-fn tf(index: &TermFrequency, term: &str) -> f32 {
-    index.get(term).cloned().unwrap_or(0) as f32 / index.iter().map(|(_, v)| v).sum::<usize>() as f32
+fn tf(index: &TermFrequency, n: usize, term: &str) -> f32 {
+    index.get(term).cloned().unwrap_or(0) as f32 / n as f32
 }
 
-fn idf(index: &Index, term: &str) -> f32 {
-    let n = index.len() as f32;
-    let df = index.iter().filter(|(_, term_frequency)| term_frequency.contains_key(term)).count().max(1) as f32;
-    (n / df).log10()
+fn idf(df: &DocFrequency, n: usize, term: &str) -> f32 {
+    let n = n as f32;
+    let m = df.get(term).cloned().unwrap_or(1) as f32;
+    (n / m).log(2.0)
 }
 
 fn serve_request(index: &Index, mut request: Request) -> Result<(), ()> {
@@ -191,10 +208,10 @@ fn serve_request(index: &Index, mut request: Request) -> Result<(), ()> {
             
             let mut result = Vec::<(&Path, f32)>::new();
 
-            for (path , file_index) in index {
+            for (path , (n, file_index)) in &index.tfd {
                 let mut score = 0.0;
                 for term in Lexer::new(&body.chars().collect::<Vec<char>>()) {
-                    score += tf(file_index, &term) * idf(index, &term);
+                    score += tf(&file_index, *n, &term) * idf(&index.df, index.tfd.len(), &term);
                 }
                 result.push((path, score));
             }
