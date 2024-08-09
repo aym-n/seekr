@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 use std::process::exit;
 use std::{fs::*, usize};
 
+use rust_stemmers::{Algorithm, Stemmer};
+
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 
 struct Lexer<'a> {
@@ -43,12 +45,14 @@ impl<'a> Lexer<'a> {
         let c = self.content[0];
 
         if c.is_alphabetic() {
-            return Some(
-                self.consume_while(|c| c.is_alphabetic())
-                    .iter()
-                    .map(|x| x.to_ascii_uppercase())
-                    .collect(),
-            );
+            let token = self
+                .consume_while(|c| c.is_alphabetic())
+                .iter()
+                .map(|x| x.to_ascii_lowercase())
+                .collect::<String>();
+            let stemmer = Stemmer::create(Algorithm::English);
+            let stemmed_token = stemmer.stem(&token);
+            return Some(stemmed_token.to_ascii_uppercase());
         }
 
         if c.is_numeric() {
@@ -215,6 +219,7 @@ fn serve_request(index: &Index, mut request: Request) -> Result<(), ()> {
             for (path, (n, file_index)) in &index.tfd {
                 let mut score = 0.0;
                 for term in Lexer::new(&body.chars().collect::<Vec<char>>()) {
+                    print!("{:?} ", term);
                     score += tf(&file_index, *n, &term) * idf(&index.df, index.tfd.len(), &term);
                 }
                 result.push((path, score));
@@ -237,7 +242,6 @@ fn serve_request(index: &Index, mut request: Request) -> Result<(), ()> {
             request.respond(response).map_err(|e| {
                 eprintln!("ERROR: Could not respond to request: {e}");
             })?;
-
         }
 
         Method::Get => match request.url() {
