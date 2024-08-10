@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::exit;
+use std::time::SystemTime;
 use std::{fs::*, usize};
 
 use rust_stemmers::{Algorithm, Stemmer};
@@ -89,8 +90,15 @@ fn read_html_file<P: AsRef<Path>>(file_path: P) -> io::Result<String> {
 }
 
 type TermFrequency = HashMap<String, usize>;
-type TermFrequencyPerDoc = HashMap<PathBuf, (usize, TermFrequency)>;
+type TermFrequencyPerDoc = HashMap<PathBuf, Doc>;
 type DocFrequency = HashMap<String, usize>;
+
+#[derive(Serialize, Deserialize)]
+struct Doc {
+    term_frequency: TermFrequency,
+    count: usize,
+    last_modified: SystemTime,
+}
 
 #[derive(Default, Serialize, Deserialize)]
 struct Index {
@@ -127,6 +135,8 @@ fn process_folder(folder: ReadDir, index: &mut Index) -> io::Result<()> {
     for entry in folder {
         let entry = entry?;
         let path = entry.path();
+        
+        let last_modified = path.metadata()?.modified()?;
 
         if path.is_dir() {
             let subfolder = read_dir(&path)?;
@@ -158,7 +168,13 @@ fn process_folder(folder: ReadDir, index: &mut Index) -> io::Result<()> {
                 }
             }
 
-            index.tfd.insert(path, (n, term_frequency));
+            index.tfd.insert(path, {
+                Doc {
+                    term_frequency,
+                    count: n,
+                    last_modified,
+                }
+            });
         }
     }
 
@@ -216,7 +232,8 @@ fn serve_request(index: &Index, mut request: Request) -> Result<(), ()> {
 
             let mut result = Vec::<(&Path, f32)>::new();
 
-            for (path, (n, file_index)) in &index.tfd {
+            for (path, doc) in &index.tfd {
+                let (n, file_index) = (&doc.count, &doc.term_frequency);
                 let mut score = 0.0;
                 for term in Lexer::new(&body.chars().collect::<Vec<char>>()) {
                     print!("{:?} ", term);
