@@ -10,12 +10,10 @@ use std::{fs::*, usize};
 mod lexer;
 use crate::lexer::*;
 
-use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
+mod server;
+use crate::server::*;
 
-fn read_html_file<P: AsRef<Path>>(file_path: P) -> io::Result<String> {
-    let file_content = read_to_string(file_path)?;
-    Ok(html2text(&file_content))
-}
+
 
 type TermFrequency = HashMap<String, usize>;
 type TermFrequencyPerDoc = HashMap<PathBuf, Doc>;
@@ -29,9 +27,14 @@ struct Doc {
 }
 
 #[derive(Default, Serialize, Deserialize)]
-struct Index {
+pub struct Index {
     tfd: TermFrequencyPerDoc,
     df: DocFrequency,
+}
+
+fn read_html_file<P: AsRef<Path>>(file_path: P) -> io::Result<String> {
+    let file_content = read_to_string(file_path)?;
+    Ok(html2text(&file_content))
 }
 
 fn serialize_index(index: &Index, index_path: &str) {
@@ -59,165 +62,88 @@ fn index_folder(folder_path: &str) -> io::Result<()> {
     Ok(())
 }
 
+
 fn process_folder(folder: ReadDir, index: &mut Index) -> io::Result<()> {
     for entry in folder {
         let entry = entry?;
         let path = entry.path();
         
-        let last_modified = path.metadata()?.modified()?;
-
         if path.is_dir() {
             let subfolder = read_dir(&path)?;
-
             println!("Indexing folder {:?}", path);
-
             process_folder(subfolder, index)?;
         } else {
-            println!("Indexing file {:?}", path);
-
-            let file_content = read_html_file(&path)?.chars().collect::<Vec<char>>();
-
-            let mut term_frequency: TermFrequency = HashMap::new();
-            let mut n = 0;
-            for token in Lexer::new(&file_content) {
-                if let Some(count) = term_frequency.get_mut(&token) {
-                    *count += 1;
-                } else {
-                    term_frequency.insert(token, 1);
-                }
-                n += 1;
+            
+            if path.extension().unwrap_or_default() != "html" {
+                println!("INFO: Skipping file {:?}", path);
+                continue;
             }
 
-            for token in term_frequency.keys() {
-                if let Some(count) = index.df.get_mut(token) {
-                    *count += 1;
-                } else {
-                    index.df.insert(token.to_string(), 1);
-                }
-            }
-
-            index.tfd.insert(path, {
-                Doc {
-                    term_frequency,
-                    count: n,
-                    last_modified,
-                }
-            });
+            println!("  Indexing file {:?}", path);
+            add_file_to_index(path, index)?;
         }
     }
 
     Ok(())
 }
 
-fn check_index(index_path: &str) -> io::Result<()> {
-    let index = deserialize_index(index_path);
-    println!("{index_path} => {count} files", count = index.tfd.len());
+fn add_file_to_index(file_path: PathBuf, index: &mut Index) -> io::Result<()> {
+
+    let last_modified = file_path.metadata()?.modified()?;
+
+    let file_content = read_html_file(&file_path)?.chars().collect::<Vec<char>>();
+
+    let mut term_frequency: TermFrequency = HashMap::new();
+    let mut n = 0;
+    for token in Lexer::new(&file_content) {
+        if let Some(count) = term_frequency.get_mut(&token) {
+            *count += 1;
+        } else {
+            term_frequency.insert(token, 1);
+        }
+        n += 1;
+    }
+
+    for token in term_frequency.keys() {
+        if let Some(count) = index.df.get_mut(token) {
+            *count += 1;
+        } else {
+            index.df.insert(token.to_string(), 1);
+        }
+    }
+
+    index.tfd.insert(file_path.to_path_buf(), {
+        Doc {
+            term_frequency,
+            count: n,
+            last_modified,
+        }
+    });
+
     Ok(())
 }
 
-fn serve_static_files(request: Request, path: &str, content_type: &str) -> Result<(), ()> {
-    let header = Header::from_bytes(&b"Content-Type"[..], content_type.as_bytes()).unwrap();
-    let file = File::open(path).map_err(|e| {
-        eprintln!("ERROR: Could not open file: {e}");
-    })?;
-
-    let response = Response::from_file(file)
-        .with_header(header)
-        .with_status_code(StatusCode(200));
-    request.respond(response).map_err(|e| {
-        eprintln!("ERROR: Could not respond to request: {e}");
-    })?;
-    Ok(())
-}
-
-fn tf(index: &TermFrequency, n: usize, term: &str) -> f32 {
+pub fn tf(index: &TermFrequency, n: usize, term: &str) -> f32 {
     index.get(term).cloned().unwrap_or(0) as f32 / n as f32
 }
 
-fn idf(df: &DocFrequency, n: usize, term: &str) -> f32 {
+pub fn idf(df: &DocFrequency, n: usize, term: &str) -> f32 {
     let n = n as f32;
     let m = df.get(term).cloned().unwrap_or(1) as f32;
     (n / m).log(2.0)
 }
 
-fn serve_request(index: &Index, mut request: Request) -> Result<(), ()> {
-    println!(
-        "INFO: Incoming request, method: {:?}, url: {}",
-        request.method(),
-        request.url()
-    );
-
-    match request.method() {
-        Method::Post => {
-            let mut body = Vec::new();
-            request.as_reader().read_to_end(&mut body).map_err(|e| {
-                eprintln!("ERROR: Could not read request body: {e}");
-            })?;
-
-            let body = String::from_utf8(body).map_err(|e| {
-                eprintln!("ERROR: Could not parse request body: {e}");
-            })?;
-
-            let mut result = Vec::<(&Path, f32)>::new();
-
-            for (path, doc) in &index.tfd {
-                let (n, file_index) = (&doc.count, &doc.term_frequency);
-                let mut score = 0.0;
-                for term in Lexer::new(&body.chars().collect::<Vec<char>>()) {
-                    print!("{:?} ", term);
-                    score += tf(&file_index, *n, &term) * idf(&index.df, index.tfd.len(), &term);
-                }
-                result.push((path, score));
-            }
-
-            result.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-
-            for (path, score) in result.iter().take(10) {
-                println!("{:?} => {}", path, score);
-            }
-
-            let result_json = serde_json::to_string(&result).map_err(|e| {
-                eprintln!("ERROR: Could not serialize response: {e}");
-            })?;
-
-            let response = Response::from_string(result_json)
-                .with_header(Header::from_bytes(&b"Content-Type"[..], b"application/json").unwrap())
-                .with_status_code(StatusCode(200));
-
-            request.respond(response).map_err(|e| {
-                eprintln!("ERROR: Could not respond to request: {e}");
-            })?;
-        }
-
-        Method::Get => match request.url() {
-            "/" | "/index.html" => {
-                serve_static_files(request, "static/index.html", "text/html")?;
-            }
-
-            "/index.js" => {
-                serve_static_files(request, "static/index.js", "application/javascript")?;
-            }
-
-            _ => {
-                serve_static_files(request, "static/404.html", "text/html")?;
-            }
-        },
-
-        _ => {
-            serve_static_files(request, "static/404.html", "text/html")?;
-        }
-    }
-    Ok(())
-}
 fn main() -> io::Result<()> {
+    
     let mut args = std::env::args();
-
+    
     let command = args.nth(1).unwrap_or_else(|| {
         eprintln!("ERROR: No command provided");
         exit(1);
     });
 
     match command.as_str() {
+
         "index" => {
             let dir_path = args.next().unwrap_or_else(|| {
                 eprintln!("ERROR: No directory provided");
@@ -230,35 +156,15 @@ fn main() -> io::Result<()> {
                 exit(1);
             });
         }
-        "search" => {
-            let index_path = args.next().unwrap_or_else(|| {
-                eprintln!("ERROR: No index file provided");
-                eprintln!("USAGE: search <index>");
-                exit(1);
-            });
 
-            check_index(&index_path).unwrap_or_else(|e| {
-                eprintln!("ERROR: {}", e);
-                exit(1);
-            });
-        }
         "serve" => {
             let index_path = args.next().unwrap_or("index.json".to_string());
-
             let index = deserialize_index(&index_path);
 
             let address = args.next().unwrap_or("0.0.0.0:8000".to_string());
-            let server = Server::http(&address).unwrap_or_else(|err| {
-                eprintln!("ERROR: Could not start server: {err}");
-                exit(1);
-            });
-
-            println!("Server started at http://{address}");
-
-            for request in server.incoming_requests() {
-                let _ = serve_request(&index, request);
-            }
+            start_server(index, address);
         }
+
         _ => {
             eprintln!("ERROR: Unknown command: {}", command);
             exit(1);
