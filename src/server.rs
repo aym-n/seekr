@@ -1,14 +1,16 @@
-use tiny_http::{Header, Method, Request, Response, StatusCode};
+use crate::lexer::Lexer;
 use std::fs::File;
 use std::path::Path;
-use crate::lexer::Lexer;
+use tiny_http::{Header, Method, Request, Response, StatusCode};
 
-use crate::{Index, tf, idf};
+use crate::{idf, tf, Index};
 
 pub fn start_server(index: Index, address: String) {
-    let server = tiny_http::Server::http(&address).map_err(|e| {
-        eprintln!("ERROR: Could not start server: {e}");
-    }).unwrap();
+    let server = tiny_http::Server::http(&address)
+        .map_err(|e| {
+            eprintln!("ERROR: Could not start server: {e}");
+        })
+        .unwrap();
 
     println!("Server started at http://{address}");
 

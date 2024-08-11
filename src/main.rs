@@ -13,8 +13,6 @@ use crate::lexer::*;
 mod server;
 use crate::server::*;
 
-
-
 type TermFrequency = HashMap<String, usize>;
 type TermFrequencyPerDoc = HashMap<PathBuf, Doc>;
 type DocFrequency = HashMap<String, usize>;
@@ -62,33 +60,53 @@ fn index_folder(folder_path: &str) -> io::Result<()> {
     Ok(())
 }
 
-
 fn process_folder(folder: ReadDir, index: &mut Index) -> io::Result<()> {
     for entry in folder {
         let entry = entry?;
         let path = entry.path();
-        
+
         if path.is_dir() {
             let subfolder = read_dir(&path)?;
             println!("Indexing folder {:?}", path);
             process_folder(subfolder, index)?;
         } else {
-            
             if path.extension().unwrap_or_default() != "html" {
                 println!("INFO: Skipping file {:?}", path);
                 continue;
             }
 
-            println!("  Indexing file {:?}", path);
-            add_file_to_index(path, index)?;
+            if let Some(doc) = index.tfd.get(&path) {
+                let last_modified = path.metadata()?.modified()?;
+                if doc.last_modified >= last_modified {
+                    println!("INFO: Skipping file {:?}", path);
+                    continue;
+                } else {
+                    println!("INFO: Updating file {:?}", path);
+                    remove_file_from_index(index, &path)?;
+                    add_file_to_index(path, index)?;
+                }
+            } else {
+                println!("INFO: Indexing file {:?}", path);
+                add_file_to_index(path, index)?;
+            }
         }
     }
 
     Ok(())
 }
 
-fn add_file_to_index(file_path: PathBuf, index: &mut Index) -> io::Result<()> {
+fn remove_file_from_index(index: &mut Index, file_path: &PathBuf) -> io::Result<()> {
+    if let Some(doc) = index.tfd.remove(file_path) {
+        for (term, _) in doc.term_frequency {
+            if let Some(count) = index.df.get_mut(&term) {
+                *count -= 1;
+            }
+        }
+    }
+    Ok(())
+}
 
+fn add_file_to_index(file_path: PathBuf, index: &mut Index) -> io::Result<()> {
     let last_modified = file_path.metadata()?.modified()?;
 
     let file_content = read_html_file(&file_path)?.chars().collect::<Vec<char>>();
@@ -134,16 +152,14 @@ pub fn idf(df: &DocFrequency, n: usize, term: &str) -> f32 {
 }
 
 fn main() -> io::Result<()> {
-    
     let mut args = std::env::args();
-    
+
     let command = args.nth(1).unwrap_or_else(|| {
         eprintln!("ERROR: No command provided");
         exit(1);
     });
 
     match command.as_str() {
-
         "index" => {
             let dir_path = args.next().unwrap_or_else(|| {
                 eprintln!("ERROR: No directory provided");
@@ -155,6 +171,29 @@ fn main() -> io::Result<()> {
                 eprintln!("ERROR: {}", e);
                 exit(1);
             });
+        }
+
+        "reindex" => {
+            let index_path = args.next().unwrap_or("index.json".to_string());
+            let mut index = deserialize_index(&index_path);
+
+            let dir_path = args.next().unwrap_or_else(|| {
+                eprintln!("ERROR: No directory provided");
+                eprint!("USAGE: reindex <index> <directory>");
+                exit(1);
+            });
+
+            let folder = read_dir(&dir_path).unwrap_or_else(|e| {
+                eprintln!("ERROR: {}", e);
+                exit(1);
+            });
+
+            process_folder(folder, &mut index).unwrap_or_else(|e| {
+                eprintln!("ERROR: {}", e);
+                exit(1);
+            });
+
+            serialize_index(&index, &index_path);
         }
 
         "serve" => {
