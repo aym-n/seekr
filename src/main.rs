@@ -35,27 +35,26 @@ fn read_html_file<P: AsRef<Path>>(file_path: P) -> io::Result<String> {
     Ok(html2text(&file_content))
 }
 
-fn serialize_index(index: &Index, index_path: &str) {
+fn serialize_index(index: &Index, index_path: &PathBuf) {
     println!("Serializing index to {:?}", index_path);
     let index_file = File::create(index_path).expect("Could not create index file");
     serde_json::to_writer(index_file, index).expect("Could not serialize index file");
 }
 
-fn deserialize_index(index_path: &str) -> Index {
+fn deserialize_index(index_path: &PathBuf) -> Index {
     println!("Deserializing index from {:?}", index_path);
     let index_file = File::open(index_path).expect("Could not open index file");
     serde_json::from_reader(index_file).expect("Could not deserialize index file")
 }
 
-fn index_folder(folder_path: &str) -> io::Result<()> {
+fn index_folder(folder_path: &str, index_path: &PathBuf) -> io::Result<()> {
     let folder = read_dir(folder_path)?;
 
     let mut index: Index = Default::default();
 
     process_folder(folder, &mut index)?;
 
-    let path = "index.json";
-    serialize_index(&index, path);
+    serialize_index(&index, index_path);
 
     Ok(())
 }
@@ -167,21 +166,24 @@ fn main() -> io::Result<()> {
                 exit(1);
             });
 
-            index_folder(&dir_path).unwrap_or_else(|e| {
+            let index_path = Path::new(&dir_path).with_extension("json");
+
+            index_folder(&dir_path, &index_path).unwrap_or_else(|e| {
                 eprintln!("ERROR: {}", e);
                 exit(1);
             });
         }
 
         "reindex" => {
-            let index_path = args.next().unwrap_or("index.json".to_string());
-            let mut index = deserialize_index(&index_path);
-
             let dir_path = args.next().unwrap_or_else(|| {
                 eprintln!("ERROR: No directory provided");
-                eprint!("USAGE: reindex <index> <directory>");
+                eprint!("USAGE: reindex <directory>");
                 exit(1);
             });
+
+            let index_path = Path::new(&dir_path).with_extension("json");
+
+            let mut index = deserialize_index(&index_path);
 
             let folder = read_dir(&dir_path).unwrap_or_else(|e| {
                 eprintln!("ERROR: {}", e);
@@ -197,11 +199,25 @@ fn main() -> io::Result<()> {
         }
 
         "serve" => {
-            let index_path = args.next().unwrap_or("index.json".to_string());
-            let index = deserialize_index(&index_path);
+            let folder_name = args.next().unwrap_or_else(|| {
+                eprintln!("ERROR: No directory provided");
+                eprint!("USAGE: serve <directory>");
+                exit(1);
+            });
 
-            let address = args.next().unwrap_or("0.0.0.0:8000".to_string());
-            start_server(index, address);
+            let index_path = Path::new(&folder_name).with_extension("json");
+
+            let mut index = if index_path.exists() {
+                deserialize_index(&index_path)
+            } else {
+                Index::default()
+            };
+
+            process_folder(read_dir(folder_name)?, &mut index)?;
+
+            serialize_index(&index, &index_path);
+
+            start_server(index, "127.0.0.1:8000".to_string());
         }
 
         _ => {
