@@ -14,7 +14,7 @@ Seekr is a simple and efficient multithreaded search engine built in Rust. It en
 1. Clone the repository:
 
    ```sh
-   git clone https://github.com/yourusername/seekr.git
+   git clone https://github.com/aym-n/seekr.git
    cd seekr
    ```
 
