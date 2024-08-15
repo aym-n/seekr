@@ -1,14 +1,136 @@
 <!DOCTYPE html>
 <html>
-<head>
-    <title>Dummy Page</title>
-</head>
-<body>
-    <h1>Welcome to the Dummy Page!</h1>
-        <label for="inputField">Input:</label>
-        <input type="text" id="inputField" name="inputField">
-        <button id="submitButton">Submit</button>
-    <div id="output"></div>
+  <head>
+    <title>SEEKR - Web Interface</title>
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600&display=swap");
+
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+        font-family: "Poppins", sans-serif;
+      }
+      body {
+        min-height: 100vh;
+        display: flex;
+        justify-content: center;
+        background: #353842;
+      }
+      .input-box {
+        position: relative;
+        height: 76px;
+        width: 100%;
+        background: #fff;
+        border-radius: 8px;
+        box-shadow: 0 5px 10px rgba(0, 0, 0, 0.1);
+        margin-top: 100px;
+      }
+      .input-box i,
+      .input-box .button {
+        position: absolute;
+        top: 50%;
+        transform: translateY(-50%);
+      }
+      .input-box i {
+        left: 20px;
+        font-size: 30px;
+        color: #707070;
+      }
+      .input-box input {
+        height: 100%;
+        width: 100%;
+        outline: none;
+        font-size: 18px;
+        font-weight: 400;
+        border: none;
+        padding: 0 155px 0 65px;
+        background-color: transparent;
+      }
+      .input-box .button {
+        right: 20px;
+        font-size: 16px;
+        font-weight: 400;
+        color: #fff;
+        border: none;
+        padding: 12px 30px;
+        border-radius: 6px;
+        background-color: #ecbd00;
+        cursor: pointer;
+      }
+
+      #output {
+        margin-top: 20px;
+        max-width: 900px;
+        width: 100%;
+        background: #fff;
+        margin: 0 20px;
+        border-radius: 8px;
+        box-shadow: 0 5px 10px rgba(0, 0, 0, 0.1);
+        padding: 20px;
+        margin-top: 20px;
+      }
+
+      .result-container {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 10px 20px;
+        border: 1px solid #ddd;
+        border-radius: 5px;
+        background-color: #f9f9f9;
+        margin-bottom: 10px;
+        transition: background-color 0.3s ease;
+        margin-top: 20px;
+      }
+
+      .result-container:hover {
+        background-color: #f0f0f0;
+      }
+
+      .result-link {
+        text-decoration: none;
+        font-weight: bold;
+        color: #0073e6;
+        font-size: 16px;
+      }
+
+      .result-link:hover {
+        text-decoration: underline;
+      }
+
+      .tfidf-score {
+        font-size: 14px;
+        color: #555;
+      }
+
+      .result-list{
+        background-color: #ffffff;
+        padding: 20px;
+        border-radius: 8px;
+        margin-top: 20px;
+      }
+    </style>
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.6.0/css/all.min.css"
+    />
+  </head>
+  <body>
+    <div>
+      <div class="input-box">
+        <i class="fas fa-search"></i>
+        <input
+          type="text"
+          placeholder="Search here..."
+          id="inputField"
+          name="inputField"
+        />
+        <button class="button" id="submitButton">Search</button>
+      </div>
+
+      <div class="result-list"></div>
+    </div>
     <script src="index.js"></script>
-</body>
+  </body>
 </html>

@@ -165,12 +165,12 @@ fn main() -> io::Result<()> {
             };
 
             process_folder(read_dir(dir_path).unwrap(), &index)
-                        .map_err(|e| {
-                            eprintln!("ERROR: {}", e);
-                            exit(1);
-                        })
-                        .unwrap();
-            
+                .map_err(|e| {
+                    eprintln!("ERROR: {}", e);
+                    exit(1);
+                })
+                .unwrap();
+
             let index = index.lock().unwrap();
             serialize_index(&index, &index_path);
         }
