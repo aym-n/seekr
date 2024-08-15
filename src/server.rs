@@ -1,11 +1,12 @@
 use crate::lexer::Lexer;
-use std::fs::File;
 use std::path::Path;
+use std::sync::Mutex;
+use std::{fs::File, sync::Arc};
 use tiny_http::{Header, Method, Request, Response, StatusCode};
 
 use crate::{idf, tf, Index};
 
-pub fn start_server(index: Index, address: String) {
+pub fn start_server(index: Arc<Mutex<Index>>, address: String) {
     let server = tiny_http::Server::http(&address)
         .map_err(|e| {
             eprintln!("ERROR: Could not start server: {e}");
@@ -15,11 +16,11 @@ pub fn start_server(index: Index, address: String) {
     println!("Server started at http://{address}");
 
     for request in server.incoming_requests() {
-        let _ = serve_request(&index, request);
+        let _ = serve_request(Arc::clone(&index), request);
     }
 }
 
-pub fn serve_request(index: &Index, mut request: Request) -> Result<(), ()> {
+pub fn serve_request(index: Arc<Mutex<Index>>, mut request: Request) -> Result<(), ()> {
     println!(
         "INFO: Incoming request, method: {:?}, url: {}",
         request.method(),
@@ -38,6 +39,8 @@ pub fn serve_request(index: &Index, mut request: Request) -> Result<(), ()> {
             })?;
 
             let mut result = Vec::<(&Path, f32)>::new();
+
+            let index = index.lock().unwrap();
 
             for (path, doc) in &index.tfd {
                 let (n, file_index) = (&doc.count, &doc.term_frequency);

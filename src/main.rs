@@ -1,11 +1,13 @@
 use nanohtml2text::html2text;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::io;
 use std::path::{Path, PathBuf};
 use std::process::exit;
 use std::time::SystemTime;
 use std::{fs::*, usize};
+use std::{io, thread};
+
+use std::sync::{Arc, Mutex};
 
 mod lexer;
 use crate::lexer::*;
@@ -50,16 +52,17 @@ fn deserialize_index(index_path: &PathBuf) -> Index {
 fn index_folder(folder_path: &str, index_path: &PathBuf) -> io::Result<()> {
     let folder = read_dir(folder_path)?;
 
-    let mut index: Index = Default::default();
+    let mut index = Default::default();
 
     process_folder(folder, &mut index)?;
 
+    let index = index.lock().unwrap();
     serialize_index(&index, index_path);
 
     Ok(())
 }
 
-fn process_folder(folder: ReadDir, index: &mut Index) -> io::Result<()> {
+fn process_folder(folder: ReadDir, index: &Arc<Mutex<Index>>) -> io::Result<()> {
     for entry in folder {
         let entry = entry?;
         let path = entry.path();
@@ -73,7 +76,7 @@ fn process_folder(folder: ReadDir, index: &mut Index) -> io::Result<()> {
                 println!("INFO: Skipping file {:?}", path);
                 continue;
             }
-
+            let mut index = index.lock().unwrap();
             if let Some(doc) = index.tfd.get(&path) {
                 let last_modified = path.metadata()?.modified()?;
                 if doc.last_modified >= last_modified {
@@ -81,12 +84,12 @@ fn process_folder(folder: ReadDir, index: &mut Index) -> io::Result<()> {
                     continue;
                 } else {
                     println!("INFO: Updating file {:?}", path);
-                    remove_file_from_index(index, &path)?;
-                    add_file_to_index(path, index)?;
+                    remove_file_from_index(&mut index, &path)?;
+                    add_file_to_index(path, &mut index)?;
                 }
             } else {
                 println!("INFO: Indexing file {:?}", path);
-                add_file_to_index(path, index)?;
+                add_file_to_index(path, &mut index)?;
             }
         }
     }
@@ -159,45 +162,44 @@ fn main() -> io::Result<()> {
     });
 
     match command.as_str() {
-        "index" => {
-            let dir_path = args.next().unwrap_or_else(|| {
-                eprintln!("ERROR: No directory provided");
-                eprint!("USAGE: index <directory>");
-                exit(1);
-            });
+        // "index" => {
+        //     let dir_path = args.next().unwrap_or_else(|| {
+        //         eprintln!("ERROR: No directory provided");
+        //         eprint!("USAGE: index <directory>");
+        //         exit(1);
+        //     });
 
-            let index_path = Path::new(&dir_path).with_extension("json");
+        //     let index_path = Path::new(&dir_path).with_extension("json");
 
-            index_folder(&dir_path, &index_path).unwrap_or_else(|e| {
-                eprintln!("ERROR: {}", e);
-                exit(1);
-            });
-        }
+        //     index_folder(&dir_path, &index_path).unwrap_or_else(|e| {
+        //         eprintln!("ERROR: {}", e);
+        //         exit(1);
+        //     });
+        // }
 
-        "reindex" => {
-            let dir_path = args.next().unwrap_or_else(|| {
-                eprintln!("ERROR: No directory provided");
-                eprint!("USAGE: reindex <directory>");
-                exit(1);
-            });
+        // "reindex" => {
+        //     let dir_path = args.next().unwrap_or_else(|| {
+        //         eprintln!("ERROR: No directory provided");
+        //         eprint!("USAGE: reindex <directory>");
+        //         exit(1);
+        //     });
 
-            let index_path = Path::new(&dir_path).with_extension("json");
+        //     let index_path = Path::new(&dir_path).with_extension("json");
 
-            let mut index = deserialize_index(&index_path);
+        //     let mut index = deserialize_index(&index_path);
 
-            let folder = read_dir(&dir_path).unwrap_or_else(|e| {
-                eprintln!("ERROR: {}", e);
-                exit(1);
-            });
+        //     let folder = read_dir(&dir_path).unwrap_or_else(|e| {
+        //         eprintln!("ERROR: {}", e);
+        //         exit(1);
+        //     });
 
-            process_folder(folder, &mut index).unwrap_or_else(|e| {
-                eprintln!("ERROR: {}", e);
-                exit(1);
-            });
+        //     process_folder(folder, &mut index).unwrap_or_else(|e| {
+        //         eprintln!("ERROR: {}", e);
+        //         exit(1);
+        //     });
 
-            serialize_index(&index, &index_path);
-        }
-
+        //     serialize_index(&index, &index_path);
+        // }
         "serve" => {
             let folder_name = args.next().unwrap_or_else(|| {
                 eprintln!("ERROR: No directory provided");
@@ -207,17 +209,29 @@ fn main() -> io::Result<()> {
 
             let index_path = Path::new(&folder_name).with_extension("json");
 
-            let mut index = if index_path.exists() {
-                deserialize_index(&index_path)
+            let index = if index_path.exists() {
+                Arc::new(Mutex::new(deserialize_index(&index_path)))
             } else {
-                Index::default()
+                Default::default()
             };
 
-            process_folder(read_dir(folder_name)?, &mut index)?;
+            {
+                let index = Arc::clone(&index);
+                thread::spawn(move || {
+                    let index = Arc::clone(&index);
+                    process_folder(read_dir(folder_name).unwrap(), &index)
+                        .map_err(|e| {
+                            eprintln!("ERROR: {}", e);
+                            exit(1);
+                        })
+                        .unwrap();
 
-            serialize_index(&index, &index_path);
+                    let index = index.lock().unwrap();
+                    serialize_index(&index, &index_path);
+                });
+            }
 
-            start_server(index, "127.0.0.1:8000".to_string());
+            start_server(Arc::clone(&index), "127.0.0.1:8000".to_string());
         }
 
         _ => {
