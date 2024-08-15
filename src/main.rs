@@ -49,19 +49,6 @@ fn deserialize_index(index_path: &PathBuf) -> Index {
     serde_json::from_reader(index_file).expect("Could not deserialize index file")
 }
 
-fn index_folder(folder_path: &str, index_path: &PathBuf) -> io::Result<()> {
-    let folder = read_dir(folder_path)?;
-
-    let mut index = Default::default();
-
-    process_folder(folder, &mut index)?;
-
-    let index = index.lock().unwrap();
-    serialize_index(&index, index_path);
-
-    Ok(())
-}
-
 fn process_folder(folder: ReadDir, index: &Arc<Mutex<Index>>) -> io::Result<()> {
     for entry in folder {
         let entry = entry?;
@@ -162,48 +149,36 @@ fn main() -> io::Result<()> {
     });
 
     match command.as_str() {
-        // "index" => {
-        //     let dir_path = args.next().unwrap_or_else(|| {
-        //         eprintln!("ERROR: No directory provided");
-        //         eprint!("USAGE: index <directory>");
-        //         exit(1);
-        //     });
+        "index" => {
+            let dir_path = args.next().unwrap_or_else(|| {
+                eprintln!("ERROR: No directory provided");
+                eprint!("USAGE: index <directory>");
+                exit(1);
+            });
 
-        //     let index_path = Path::new(&dir_path).with_extension("json");
+            let index_path = Path::new(&dir_path).with_extension("json");
 
-        //     index_folder(&dir_path, &index_path).unwrap_or_else(|e| {
-        //         eprintln!("ERROR: {}", e);
-        //         exit(1);
-        //     });
-        // }
+            let index = if index_path.exists() {
+                Arc::new(Mutex::new(deserialize_index(&index_path)))
+            } else {
+                Default::default()
+            };
 
-        // "reindex" => {
-        //     let dir_path = args.next().unwrap_or_else(|| {
-        //         eprintln!("ERROR: No directory provided");
-        //         eprint!("USAGE: reindex <directory>");
-        //         exit(1);
-        //     });
+            process_folder(read_dir(dir_path).unwrap(), &index)
+                        .map_err(|e| {
+                            eprintln!("ERROR: {}", e);
+                            exit(1);
+                        })
+                        .unwrap();
+            
+            let index = index.lock().unwrap();
+            serialize_index(&index, &index_path);
+        }
 
-        //     let index_path = Path::new(&dir_path).with_extension("json");
-
-        //     let mut index = deserialize_index(&index_path);
-
-        //     let folder = read_dir(&dir_path).unwrap_or_else(|e| {
-        //         eprintln!("ERROR: {}", e);
-        //         exit(1);
-        //     });
-
-        //     process_folder(folder, &mut index).unwrap_or_else(|e| {
-        //         eprintln!("ERROR: {}", e);
-        //         exit(1);
-        //     });
-
-        //     serialize_index(&index, &index_path);
-        // }
         "serve" => {
             let folder_name = args.next().unwrap_or_else(|| {
                 eprintln!("ERROR: No directory provided");
-                eprint!("USAGE: serve <directory>");
+                eprintln!("USAGE: serve <directory>");
                 exit(1);
             });
 
@@ -232,6 +207,14 @@ fn main() -> io::Result<()> {
             }
 
             start_server(Arc::clone(&index), "127.0.0.1:8000".to_string());
+        }
+
+        "help" => {
+            eprintln!("seekr - a simple search engine");
+            eprintln!("USAGE: index <directory> - generate index for a directory");
+            eprintln!("       serve <directory> - start a server for a directory");
+            eprintln!("       help - show this help message");
+            exit(1);
         }
 
         _ => {
